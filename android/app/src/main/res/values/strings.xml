@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Lime Print Bridge</string>
+    <string name="open_lime_booking">Odpri Lime Booking</string>
+    <string name="select_printer">Izberi Bluetooth tiskalnik</string>
+    <string name="pair_in_settings">Sparite tiskalnik v sistemskih Bluetooth nastavitvah</string>
+    <string name="open_bt_settings">Odpri Bluetooth nastavitve</string>
+    <string name="test_print">Testno tiskanje</string>
+    <string name="paper_width">Širina papirja</string>
+    <string name="paper_58mm">58 mm (33 stolpcev)</string>
+    <string name="paper_80mm">80 mm (48 stolpcev)</string>
+    <string name="server_running">Print bridge teče</string>
+    <string name="server_running_text">QZ Tray emulator posluša na localhost:8181</string>
+    <string name="default_printer">Privzeti tiskalnik</string>
+    <string name="no_printer_selected">Ni izbranega tiskalnika</string>
+    <string name="permissions_required">Bluetooth dovoljenja so obvezna</string>
+    <string name="grant_permissions">Dovoli</string>
+    <string name="allow_lime_to_print">Dovoli Lime Booking, da tiska?</string>
+    <string name="allow_once">Enkrat</string>
+    <string name="allow_always">Vedno</string>
+    <string name="block">Blokiraj</string>
+</resources>

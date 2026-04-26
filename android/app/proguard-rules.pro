@@ -1,0 +1,4 @@
+-keep class org.bouncycastle.** { *; }
+-keep class org.java_websocket.** { *; }
+-dontwarn org.bouncycastle.**
+-dontwarn org.java_websocket.**
