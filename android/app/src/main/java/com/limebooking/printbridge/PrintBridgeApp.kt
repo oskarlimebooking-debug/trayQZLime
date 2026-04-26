@@ -39,7 +39,7 @@ class PrintBridgeApp : Application() {
         super.onCreate()
         printerRegistry = PrinterRegistry(this)
         allowedCerts = QzAllowedCerts(this)
-        printer = EscPosPrinter(printerRegistry)
+        printer = EscPosPrinter(this, printerRegistry)
     }
 
     @Synchronized

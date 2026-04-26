@@ -19,7 +19,7 @@ import java.util.UUID
 class BluetoothTransport(
     private val adapter: BluetoothAdapter,
     private val deviceAddress: String
-) : AutoCloseable {
+) : Transport {
 
     companion object {
         private const val TAG = "BluetoothTransport"
@@ -33,7 +33,7 @@ class BluetoothTransport(
     private var output: OutputStream? = null
 
     @SuppressLint("MissingPermission")
-    fun connect() {
+    override fun connect() {
         val device: BluetoothDevice = adapter.getRemoteDevice(deviceAddress)
         // Cancel any in-progress discovery; it slows down RFCOMM connect
         try { adapter.cancelDiscovery() } catch (e: SecurityException) { /* ignore */ }
@@ -57,7 +57,7 @@ class BluetoothTransport(
         output = s.outputStream
     }
 
-    fun write(bytes: ByteArray) {
+    override fun write(bytes: ByteArray) {
         val out = output ?: throw IllegalStateException("Not connected")
         var offset = 0
         while (offset < bytes.size) {

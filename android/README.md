@@ -122,10 +122,21 @@ Implementacija strogo sledi protokolu desktop QZ Tray daemona, ki je v tem repo-
 - [`js/qz-tray.js`](../js/qz-tray.js) — browser-side library (specifically `qz.print` at line 1704)
 - [`sample.html`](../sample.html) — print test fixtures
 
+## Podpora tiskalnikom
+
+| Transport | Kako se izbere | Komentar |
+|-----------|----------------|----------|
+| **Bluetooth Classic SPP** | Sparite v sistemskih BT nastavitvah → app jih najde v "Sparjeni" sekciji | Standardni POS-58 / POS-80 (PT-210, MUNBYN, GoojPrt, XP-58, BT-SPP). UUID `00001101-0000-1000-8000-00805F9B34FB`. |
+| **BLE GATT** | App scan iz "BLE (skeniraj)" sekcije → tap za connect | BLE varianti (PT-210 BLE, MUNBYN ITPP047, ...). Auto-discovery najde writable characteristic na poljubnem GATT UUID schemu (FF00/FF02, 18F0/2AF1, FFE0/FFE5, Microchip, Nordic UART). MTU se pogaja do 517, chunked write s `WRITE_NO_RESPONSE` flow control-om. |
+
+Settings UI prikaže obe sekciji hkrati. Izbira (radio button) se pomni v
+SharedPreferences vključno s tipom transporta — ob naslednjem zagonu se
+uporabi pravilen pipeline brez ponovne izbire.
+
 ## Omejitve (MVP)
 
-- Samo **Bluetooth Classic SPP** (ni USB OTG ne network printerjev).
-- Samo **POS-58 testiran** (POS-80 bi moral delati, koda je width-agnostic).
+- Ni USB OTG ne network printerjev (samo Bluetooth Classic + BLE).
+- Samo **POS-58 BT Classic + en BLE printer testiran** (POS-80 bi moral delati, koda je width-agnostic).
 - **Brez signature verification** (MVP zaupa localhost-only attack surface-u).
 - **Brez cash drawer kick command-a**.
 - **En printer naenkrat** (multi-printer support v naslednji iteraciji).

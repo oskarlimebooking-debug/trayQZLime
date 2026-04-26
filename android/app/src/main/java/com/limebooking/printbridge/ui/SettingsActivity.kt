@@ -26,6 +26,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -52,8 +53,7 @@ import androidx.lifecycle.lifecycleScope
 import com.limebooking.printbridge.MainActivity
 import com.limebooking.printbridge.PrintBridgeApp
 import com.limebooking.printbridge.R
-import com.limebooking.printbridge.printer.BluetoothTransport
-import com.limebooking.printbridge.printer.PrintJob
+import com.limebooking.printbridge.printer.BleScanner
 import com.limebooking.printbridge.printer.PrinterRegistry
 import com.limebooking.printbridge.qz.QzService
 import kotlinx.coroutines.Dispatchers
@@ -63,6 +63,7 @@ import kotlinx.coroutines.withContext
 class SettingsActivity : ComponentActivity() {
 
     private val app: PrintBridgeApp get() = application as PrintBridgeApp
+    private val bleScanner by lazy { BleScanner(this) }
 
     private val permLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -84,6 +85,12 @@ class SettingsActivity : ComponentActivity() {
         }
     }
 
+    // Mutable Compose state holders, hoisted so we can mutate from BLE callbacks.
+    private val classicList = mutableStateOf<List<PrinterRegistry.Printer>>(emptyList())
+    private val bleList = mutableStateOf<List<PrinterRegistry.Printer>>(emptyList())
+    private val bleScanning = mutableStateOf(false)
+    private val selectedAddress = mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -93,12 +100,28 @@ class SettingsActivity : ComponentActivity() {
             ensureServiceStarted()
         }
 
+        classicList.value = app.printerRegistry.listClassicPaired()
+        selectedAddress.value = app.printerRegistry.defaultPrinter()?.address
+
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     SettingsScreen(
                         registry = app.printerRegistry,
                         serverPort = if (app.isServerRunning()) app.serverPort() else -1,
+                        classicPrinters = classicList.value,
+                        blePrinters = bleList.value,
+                        isBleScanning = bleScanning.value,
+                        selectedAddress = selectedAddress.value,
+                        onSelect = { p ->
+                            selectedAddress.value = p.address
+                            app.printerRegistry.setDefault(p)
+                        },
+                        onRefreshClassic = {
+                            classicList.value = app.printerRegistry.listClassicPaired()
+                        },
+                        onScanBle = { startBleScan() },
+                        onStopScan = { stopBleScan() },
                         onOpenBluetoothSettings = {
                             startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
                         },
@@ -115,37 +138,72 @@ class SettingsActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         approvalPoller.post(approvalPollTask)
+        // Refresh paired-Classic list in case user just paired a new device in
+        // system settings.
+        classicList.value = app.printerRegistry.listClassicPaired()
     }
 
     override fun onPause() {
         super.onPause()
         approvalPoller.removeCallbacks(approvalPollTask)
+        // Stop the BLE scan if active so we don't keep the radio busy after backgrounding.
+        stopBleScan()
     }
 
     private fun ensureServiceStarted() {
         if (!app.isServerRunning()) QzService.start(this)
     }
 
-    private fun runTestPrint() {
-        val printer = app.printerRegistry.defaultPrinter()
-        if (printer == null) {
-            Toast.makeText(this, R.string.no_printer_selected, Toast.LENGTH_SHORT).show()
+    private fun startBleScan() {
+        val adapter = app.printerRegistry.adapter() ?: run {
+            Toast.makeText(this, "Bluetooth ni na voljo", Toast.LENGTH_SHORT).show(); return
+        }
+        if (!adapter.isEnabled) {
+            Toast.makeText(this, "Bluetooth ni vklopljen", Toast.LENGTH_SHORT).show(); return
+        }
+        if (!bleScanner.hasScanPermission()) {
+            permLauncher.launch(requiredPermissions())
             return
+        }
+        bleScanning.value = true
+        bleList.value = emptyList()
+        bleScanner.start(adapter, object : BleScanner.Listener {
+            override fun onDiscovered(devices: List<BleScanner.Discovered>) {
+                bleList.value = devices.map {
+                    PrinterRegistry.Printer(
+                        name = if (it.isLikelyPrinter) it.name else "${it.name} · RSSI ${it.rssi}",
+                        address = it.address,
+                        transport = PrinterRegistry.TransportType.BLE
+                    )
+                }
+            }
+            override fun onScanFinished() { bleScanning.value = false }
+            override fun onError(message: String) {
+                bleScanning.value = false
+                Toast.makeText(this@SettingsActivity, message, Toast.LENGTH_LONG).show()
+            }
+        })
+    }
+
+    private fun stopBleScan() {
+        if (bleScanner.isScanning()) {
+            app.printerRegistry.adapter()?.let { bleScanner.stop(it) }
+        }
+        bleScanning.value = false
+    }
+
+    private fun runTestPrint() {
+        val saved = app.printerRegistry.defaultPrinter()
+        if (saved == null) {
+            Toast.makeText(this, R.string.no_printer_selected, Toast.LENGTH_SHORT).show(); return
         }
         val adapter = app.printerRegistry.adapter()
         if (adapter == null || !adapter.isEnabled) {
-            Toast.makeText(this, "Bluetooth ni vklopljen", Toast.LENGTH_SHORT).show()
-            return
+            Toast.makeText(this, "Bluetooth ni vklopljen", Toast.LENGTH_SHORT).show(); return
         }
         lifecycleScope.launch {
             try {
-                withContext(Dispatchers.IO) {
-                    BluetoothTransport(adapter, printer.address).use { tx ->
-                        tx.connect()
-                        tx.write(PrintJob.testPage(app.printerRegistry.paperColumns))
-                        tx.write(byteArrayOf(0x0A, 0x0A, 0x0A, 0x1D, 0x56, 0x42, 0x00))
-                    }
-                }
+                withContext(Dispatchers.IO) { app.printer.testPrint() }
                 Toast.makeText(this@SettingsActivity, "Test poslan", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
                 Toast.makeText(this@SettingsActivity, "Napaka: ${e.message}", Toast.LENGTH_LONG).show()
@@ -161,9 +219,7 @@ class SettingsActivity : ComponentActivity() {
                 app.allowedCerts.allow(req.pem)
                 req.response.offer(true)
             }
-            .setNeutralButton(R.string.allow_once) { _, _ ->
-                req.response.offer(true)
-            }
+            .setNeutralButton(R.string.allow_once) { _, _ -> req.response.offer(true) }
             .setNegativeButton(R.string.block) { _, _ ->
                 app.allowedCerts.block(req.pem)
                 req.response.offer(false)
@@ -183,7 +239,12 @@ class SettingsActivity : ComponentActivity() {
             Manifest.permission.POST_NOTIFICATIONS
         )
     } else {
-        arrayOf(Manifest.permission.BLUETOOTH, Manifest.permission.BLUETOOTH_ADMIN)
+        // Pre-12: BLE scan also requires location permission per Android docs.
+        arrayOf(
+            Manifest.permission.BLUETOOTH,
+            Manifest.permission.BLUETOOTH_ADMIN,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        )
     }
 }
 
@@ -192,17 +253,19 @@ class SettingsActivity : ComponentActivity() {
 private fun SettingsScreen(
     registry: PrinterRegistry,
     serverPort: Int,
+    classicPrinters: List<PrinterRegistry.Printer>,
+    blePrinters: List<PrinterRegistry.Printer>,
+    isBleScanning: Boolean,
+    selectedAddress: String?,
+    onSelect: (PrinterRegistry.Printer) -> Unit,
+    onRefreshClassic: () -> Unit,
+    onScanBle: () -> Unit,
+    onStopScan: () -> Unit,
     onOpenBluetoothSettings: () -> Unit,
     onTestPrint: () -> Unit,
     onOpenLime: () -> Unit
 ) {
-    var printers by remember { mutableStateOf(registry.list()) }
-    var selectedAddress by remember { mutableStateOf(registry.defaultPrinter()?.address) }
     var paperCols by remember { mutableStateOf(registry.paperColumns) }
-
-    LaunchedEffect(Unit) {
-        printers = registry.list()
-    }
 
     Scaffold(
         topBar = { TopAppBar(title = { Text(stringResource(R.string.app_name)) }) }
@@ -218,18 +281,18 @@ private fun SettingsScreen(
 
             Spacer(Modifier.height(16.dp))
 
+            // ── Bluetooth Classic (paired) ────────────────────────────────
             Text(
-                stringResource(R.string.select_printer),
+                "Bluetooth Classic (sparjeni)",
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 16.sp
             )
-            Spacer(Modifier.height(8.dp))
-
-            if (printers.isEmpty()) {
+            Spacer(Modifier.height(6.dp))
+            if (classicPrinters.isEmpty()) {
                 Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(stringResource(R.string.pair_in_settings))
-                        Spacer(Modifier.height(8.dp))
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text("Ni sparjenih Classic tiskalnikov.", fontSize = 14.sp)
+                        Spacer(Modifier.height(6.dp))
                         OutlinedButton(onClick = onOpenBluetoothSettings) {
                             Text(stringResource(R.string.open_bt_settings))
                         }
@@ -238,43 +301,60 @@ private fun SettingsScreen(
             } else {
                 Card(modifier = Modifier.fillMaxWidth()) {
                     LazyColumn {
-                        items(printers, key = { it.address }) { p ->
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 12.dp, vertical = 8.dp)
-                            ) {
-                                RadioButton(
-                                    selected = selectedAddress == p.address,
-                                    onClick = {
-                                        selectedAddress = p.address
-                                        registry.setDefault(p)
-                                    }
-                                )
-                                Column {
-                                    Text(p.name, fontWeight = FontWeight.Medium)
-                                    Text(p.address, fontSize = 12.sp, color = Color.Gray)
-                                }
-                            }
+                        items(classicPrinters, key = { it.address }) { p ->
+                            PrinterRow(p, selectedAddress, onSelect)
                             HorizontalDivider()
                         }
                     }
                 }
-                Spacer(Modifier.height(8.dp))
-                OutlinedButton(onClick = { printers = registry.list() }) {
-                    Text("Osveži")
+            }
+            Spacer(Modifier.height(4.dp))
+            OutlinedButton(onClick = onRefreshClassic) { Text("Osveži sparjene") }
+
+            Spacer(Modifier.height(16.dp))
+
+            // ── BLE (scan) ────────────────────────────────────────────────
+            Text("BLE (skeniraj)", fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+            Spacer(Modifier.height(6.dp))
+            if (blePrinters.isEmpty()) {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            if (isBleScanning) "Iskanje BLE naprav…"
+                            else "Še ni rezultatov. Vklopite tiskalnik, pritisnite feed in zaženite scan.",
+                            fontSize = 14.sp
+                        )
+                    }
+                }
+            } else {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    LazyColumn {
+                        items(blePrinters, key = { it.address }) { p ->
+                            PrinterRow(p, selectedAddress, onSelect)
+                            HorizontalDivider()
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(4.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (isBleScanning) {
+                    OutlinedButton(onClick = onStopScan) { Text("Ustavi") }
+                    Spacer(Modifier.height(0.dp))
+                    CircularProgressIndicator(
+                        modifier = Modifier
+                            .padding(start = 8.dp)
+                            .height(20.dp)
+                    )
+                } else {
+                    OutlinedButton(onClick = onScanBle) { Text("Iskanje BLE tiskalnikov") }
                 }
             }
 
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(20.dp))
 
-            Text(
-                stringResource(R.string.paper_width),
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 16.sp
-            )
-            Spacer(Modifier.height(8.dp))
+            Text(stringResource(R.string.paper_width), fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+            Spacer(Modifier.height(6.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 RadioButton(
                     selected = paperCols == 33,
@@ -290,7 +370,7 @@ private fun SettingsScreen(
                 Text(stringResource(R.string.paper_80mm))
             }
 
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(20.dp))
 
             Button(
                 onClick = onTestPrint,
@@ -298,13 +378,40 @@ private fun SettingsScreen(
                 modifier = Modifier.fillMaxWidth()
             ) { Text(stringResource(R.string.test_print)) }
 
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(8.dp))
 
             Button(
                 onClick = onOpenLime,
                 enabled = selectedAddress != null,
                 modifier = Modifier.fillMaxWidth()
             ) { Text(stringResource(R.string.open_lime_booking)) }
+        }
+    }
+}
+
+@Composable
+private fun PrinterRow(
+    p: PrinterRegistry.Printer,
+    selectedAddress: String?,
+    onSelect: (PrinterRegistry.Printer) -> Unit
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+    ) {
+        RadioButton(
+            selected = selectedAddress == p.address,
+            onClick = { onSelect(p) }
+        )
+        Column {
+            Text(p.name, fontWeight = FontWeight.Medium)
+            Text(
+                "${p.transport} · ${p.address}",
+                fontSize = 12.sp,
+                color = Color.Gray
+            )
         }
     }
 }

@@ -144,14 +144,14 @@ class QzMessageRouter(
             }
             "printers.find" -> {
                 val query = json.optJSONObject("params")?.optString("query")
-                val matches = printerRegistry.list().map { it.name }.filter {
+                val matches = printerRegistry.listAvailable().map { it.name }.filter {
                     query.isNullOrEmpty() || it.contains(query, ignoreCase = true)
                 }
                 sendResult(conn, uid, JSONArray(matches))
             }
             "printers.details", "printers.detail" -> {
                 val arr = JSONArray()
-                printerRegistry.list().forEach { p ->
+                printerRegistry.listAvailable().forEach { p ->
                     arr.put(JSONObject().put("name", p.name).put("driver", "ESCPOS").put("connection", "BLUETOOTH"))
                 }
                 sendResult(conn, uid, arr)
