@@ -100,7 +100,7 @@ enum ImageRasterizer {
             UInt8((height >> 8) & 0xFF)
         ])
         out.append(bitmap)
-        out.append(0x0A) // line feed
+        out.append(contentsOf: [0x0A]) // line feed
         return out
     }
 }

@@ -18,7 +18,7 @@ enum PrintJob {
         // ESC @ — initialize printer
         out.append(contentsOf: [0x1B, 0x40])
         // Select code page for Slovenian glyphs
-        out.append(codepageCommand(encoding))
+        out.append(contentsOf: codepageCommand(encoding))
 
         for (idx, entry) in data.enumerated() {
             do {
@@ -83,23 +83,29 @@ enum PrintJob {
 
     private static func charset(_ encoding: String) -> String.Encoding {
         // iOS doesn't expose CP1250/CP852 as `String.Encoding` constants; we go
-        // through CFStringEncoding. The `kCFStringEncoding*` symbols are
-        // `CFStringEncoding` (UInt32) constants from CoreFoundation.
+        // through CFStringEncoding. The `kCFStringEncoding*` C macros are NOT
+        // imported into Swift in newer SDKs, so we use the documented raw
+        // values from CoreFoundation/CFString.h directly:
+        //   kCFStringEncodingWindowsLatin2 (CP1250) = 0x0501
+        //   kCFStringEncodingDOSLatin2     (CP852)  = 0x0411
+        let cp1250: CFStringEncoding = 0x0501
+        let cp852:  CFStringEncoding = 0x0411
+
         let n = encoding.replacingOccurrences(of: "-", with: "")
                         .replacingOccurrences(of: "_", with: "")
                         .lowercased()
         let cfEncoding: CFStringEncoding
         switch n {
         case "cp1250", "wpc1250", "windows1250":
-            cfEncoding = CFStringEncoding(kCFStringEncodingWindowsLatin2)
+            cfEncoding = cp1250
         case "cp1252", "windows1252":
             return .windowsCP1252
         case "cp852":
-            cfEncoding = CFStringEncoding(kCFStringEncodingDOSLatin2)
+            cfEncoding = cp852
         case "utf8":
             return .utf8
         default:
-            cfEncoding = CFStringEncoding(kCFStringEncodingWindowsLatin2)
+            cfEncoding = cp1250
         }
         return String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(cfEncoding))
     }
@@ -125,8 +131,9 @@ enum PrintJob {
 
     /// Convenience for the Settings "Test print" button — produces a known-good test page.
     static func testPage(paperColumns: Int) -> Data {
+        // CP1250 raw value documented in CoreFoundation/CFString.h
         let cp1250 = String.Encoding(rawValue:
-            CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(kCFStringEncodingWindowsLatin2)))
+            CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(0x0501)))
         var out = Data()
         out.append(contentsOf: [0x1B, 0x40])           // init
         out.append(contentsOf: [0x1B, 0x74, 47])       // CP1250

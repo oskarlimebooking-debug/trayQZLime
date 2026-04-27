@@ -9,9 +9,11 @@ import Foundation
 /// link can drain. `CBPeripheral.canSendWriteWithoutResponse` and the
 /// `peripheralIsReady(...)` delegate callback let us back off until ready.
 ///
-/// Pinned to `@MainActor` because the `CBCentralManager` is initialised with
-/// `.main` queue and all CB callbacks are delivered there.
-@MainActor
+/// `CBPeripheral` methods are documented as safe to call from any thread, so
+/// this class isn't actor-isolated. The `peripheralIsReady` callback that
+/// resumes our continuations is forwarded from `BleManager`'s nonisolated
+/// delegate stub, which means waiters can resume from any thread; the
+/// continuation API handles cross-actor resume safely.
 final class BlePrinter {
     let peripheral: CBPeripheral
     let characteristic: CBCharacteristic

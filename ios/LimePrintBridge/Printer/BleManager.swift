@@ -99,64 +99,87 @@ final class BleManager: NSObject, ObservableObject {
 }
 
 // MARK: - CBCentralManagerDelegate
+//
+// CBCentralManagerDelegate protocol requirements are nonisolated. Since
+// `BleManager` is `@MainActor`, each implementation must be marked
+// `nonisolated` and hop back to the main actor before touching `@Published`
+// state. The central manager itself is initialised with the `.main` queue,
+// so the hop is effectively zero-latency.
 extension BleManager: CBCentralManagerDelegate {
 
-    func centralManagerDidUpdateState(_ central: CBCentralManager) {
-        switch central.state {
-        case .poweredOn:    state = .poweredOn
-        case .poweredOff:   state = .poweredOff
-        case .unauthorized: state = .unauthorized
-        case .unsupported:  state = .unsupported
-        default:            state = .unknown
+    nonisolated func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        let st = central.state
+        Task { @MainActor in
+            switch st {
+            case .poweredOn:    self.state = .poweredOn
+            case .poweredOff:   self.state = .poweredOff
+            case .unauthorized: self.state = .unauthorized
+            case .unsupported:  self.state = .unsupported
+            default:            self.state = .unknown
+            }
         }
     }
 
-    func centralManager(_ central: CBCentralManager,
-                        didDiscover peripheral: CBPeripheral,
-                        advertisementData: [String: Any],
-                        rssi RSSI: NSNumber) {
+    nonisolated func centralManager(_ central: CBCentralManager,
+                                    didDiscover peripheral: CBPeripheral,
+                                    advertisementData: [String: Any],
+                                    rssi RSSI: NSNumber) {
         let id = peripheral.identifier
-        let name = peripheral.name ?? (advertisementData[CBAdvertisementDataLocalNameKey] as? String) ?? "(neimenovan)"
-        peripherals[id] = peripheral
+        let advertisedName = (advertisementData[CBAdvertisementDataLocalNameKey] as? String)
+        let peripheralName = peripheral.name
+        let nameForDisplay = peripheralName ?? advertisedName ?? "(neimenovan)"
+        let advertisedServices = advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID]
+        let rssiValue = RSSI.intValue
 
-        let likely = isLikelyPrinter(name: name, advertisement: advertisementData)
-        let d = Discovered(id: id, name: name, rssi: RSSI.intValue, isLikelyPrinter: likely)
-        if let idx = discovered.firstIndex(where: { $0.id == id }) {
-            discovered[idx] = d
-        } else {
-            discovered.append(d)
+        Task { @MainActor in
+            self.peripherals[id] = peripheral
+            let likely = self.isLikelyPrinter(name: nameForDisplay, advertisedServices: advertisedServices)
+            let d = Discovered(id: id, name: nameForDisplay, rssi: rssiValue, isLikelyPrinter: likely)
+            if let idx = self.discovered.firstIndex(where: { $0.id == id }) {
+                self.discovered[idx] = d
+            } else {
+                self.discovered.append(d)
+            }
         }
     }
 
-    func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
-        connectedPeripheral = peripheral
-        peripheral.delegate = self
-        peripheral.discoverServices(nil)
-    }
-
-    func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
-        state = .error("Povezava ni uspela: \(error?.localizedDescription ?? "unknown")")
-        connectedPeripheral = nil
-    }
-
-    func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
-        connectedPeripheral = nil
-        writableChar = nil
-        if let err = error {
-            state = .error("Prekinjeno: \(err.localizedDescription)")
-        } else if central.state == .poweredOn {
-            state = .poweredOn
+    nonisolated func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+        Task { @MainActor in
+            self.connectedPeripheral = peripheral
+            peripheral.delegate = self
+            peripheral.discoverServices(nil)
         }
     }
 
-    private func isLikelyPrinter(name: String, advertisement: [String: Any]) -> Bool {
+    nonisolated func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
+        let msg = error?.localizedDescription ?? "unknown"
+        Task { @MainActor in
+            self.state = .error("Povezava ni uspela: \(msg)")
+            self.connectedPeripheral = nil
+        }
+    }
+
+    nonisolated func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
+        let errMessage = error?.localizedDescription
+        let centralState = central.state
+        Task { @MainActor in
+            self.connectedPeripheral = nil
+            self.writableChar = nil
+            if let m = errMessage {
+                self.state = .error("Prekinjeno: \(m)")
+            } else if centralState == .poweredOn {
+                self.state = .poweredOn
+            }
+        }
+    }
+
+    private func isLikelyPrinter(name: String, advertisedServices: [CBUUID]?) -> Bool {
         let n = name.lowercased()
         let hints = ["pos", "print", "rpp", "spp", "mtp", "thermal",
                      "munbyn", "goojprt", "xprinter", "xp-58", "xp-80",
                      "pt-2", "ph58", "rp-", "bxl"]
         if hints.contains(where: { n.contains($0) }) { return true }
-        // Some printers advertise specific service UUIDs
-        if let uuids = advertisement[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] {
+        if let uuids = advertisedServices {
             let printerUUIDs: Set<CBUUID> = [
                 CBUUID(string: "FF00"), CBUUID(string: "18F0"),
                 CBUUID(string: "FFE0"), CBUUID(string: "FFF0"),
@@ -169,39 +192,47 @@ extension BleManager: CBCentralManagerDelegate {
 }
 
 // MARK: - CBPeripheralDelegate
+//
+// Same pattern as the central delegate above: nonisolated stubs hop to
+// MainActor before mutating any `@Published` state.
 extension BleManager: CBPeripheralDelegate {
 
-    func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
-        guard error == nil, let services = peripheral.services else {
-            state = .error("Discovery failed: \(error?.localizedDescription ?? "no services")")
-            return
-        }
-        for s in services {
-            peripheral.discoverCharacteristics(nil, for: s)
-        }
-    }
-
-    func peripheral(_ peripheral: CBPeripheral,
-                    didDiscoverCharacteristicsFor service: CBService,
-                    error: Error?) {
-        guard error == nil, let chars = service.characteristics else { return }
-        // Prefer .writeWithoutResponse (faster for streaming ESC/POS), fall back to .write
-        if writableChar == nil,
-           let c = chars.first(where: { $0.properties.contains(.writeWithoutResponse) }) {
-            writableChar = c
-        } else if writableChar == nil,
-                  let c = chars.first(where: { $0.properties.contains(.write) }) {
-            writableChar = c
-        }
-        // Once any service finishes discovering and we have a char, declare connected.
-        if let char = writableChar {
-            let printer = BlePrinter(peripheral: peripheral, characteristic: char)
-            state = .connected(printer)
+    nonisolated func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
+        let errDesc = error?.localizedDescription
+        Task { @MainActor in
+            guard errDesc == nil, let services = peripheral.services else {
+                self.state = .error("Discovery failed: \(errDesc ?? "no services")")
+                return
+            }
+            for s in services {
+                peripheral.discoverCharacteristics(nil, for: s)
+            }
         }
     }
 
-    func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
-        // BlePrinter polls this; nothing to do here, we forward via Combine in BlePrinter.
+    nonisolated func peripheral(_ peripheral: CBPeripheral,
+                                didDiscoverCharacteristicsFor service: CBService,
+                                error: Error?) {
+        let errIsNil = error == nil
+        Task { @MainActor in
+            guard errIsNil, let chars = service.characteristics else { return }
+            // Prefer .writeWithoutResponse for streaming throughput, fall back to .write
+            if self.writableChar == nil,
+               let c = chars.first(where: { $0.properties.contains(.writeWithoutResponse) }) {
+                self.writableChar = c
+            } else if self.writableChar == nil,
+                      let c = chars.first(where: { $0.properties.contains(.write) }) {
+                self.writableChar = c
+            }
+            if let char = self.writableChar {
+                let printer = BlePrinter(peripheral: peripheral, characteristic: char)
+                self.state = .connected(printer)
+            }
+        }
+    }
+
+    nonisolated func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
+        // No actor hop needed — `notifyReady` only touches a thread-safe lock-protected map.
         BlePrinter.notifyReady(for: peripheral)
     }
 }
