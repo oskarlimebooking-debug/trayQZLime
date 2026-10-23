@@ -1,0 +1,43 @@
+{
+  "manifest_version": 3,
+  "name": "Lime QR Raster Fix",
+  "version": "1.0.1",
+  "description": "Pretvori ESC/POS QR ukaze (GS ( k) v rastrsko sliko za tiskalnike brez podpore za QR kode (npr. Rongta 58mm).",
+  "permissions": [
+    "storage"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Lime QR Raster Fix"
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://app.lime-booking.com/*",
+        "https://*.lime-booking.com/*"
+      ],
+      "js": [
+        "bridge.js"
+      ],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://app.lime-booking.com/*",
+        "https://*.lime-booking.com/*"
+      ],
+      "js": [
+        "qr-lib.js",
+        "core.js",
+        "main.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    }
+  ]
+}

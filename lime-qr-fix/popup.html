@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="sl">
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body {
+      font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+      width: 260px;
+      margin: 0;
+      padding: 14px;
+      background: #fafaf7;
+      color: #1a1a1a;
+    }
+    h1 { font-size: 14px; margin: 0 0 10px; }
+    .row { display: flex; align-items: center; justify-content: space-between; margin: 10px 0; }
+    label { font-size: 12.5px; }
+    select { font-size: 12.5px; padding: 2px 4px; }
+    /* toggle */
+    .switch { position: relative; display: inline-block; width: 42px; height: 24px; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider {
+      position: absolute; cursor: pointer; inset: 0;
+      background: #c9c9c4; border-radius: 24px; transition: 0.15s;
+    }
+    .slider:before {
+      content: ""; position: absolute; height: 18px; width: 18px;
+      left: 3px; bottom: 3px; background: #fff; border-radius: 50%; transition: 0.15s;
+    }
+    input:checked + .slider { background: #7bb143; }
+    input:checked + .slider:before { transform: translateX(18px); }
+    #status { font-size: 11.5px; color: #666; margin-top: 10px; }
+    .hint { font-size: 11px; color: #888; margin-top: 4px; line-height: 1.35; }
+  </style>
+</head>
+<body>
+  <h1>Lime QR Raster Fix</h1>
+
+  <div class="row">
+    <label for="enabled"><strong>Vklopljeno</strong></label>
+    <label class="switch">
+      <input type="checkbox" id="enabled" />
+      <span class="slider"></span>
+    </label>
+  </div>
+
+  <div class="row">
+    <label for="dots">Širina papirja</label>
+    <select id="dots">
+      <option value="384">58 mm (384 pik)</option>
+      <option value="576">80 mm (576 pik)</option>
+    </select>
+  </div>
+
+  <div class="row">
+    <label for="mode">Način slike</label>
+    <select id="mode">
+      <option value="gsv0">Raster (GS v 0)</option>
+      <option value="escstar">ESC * (starejši)</option>
+    </select>
+  </div>
+
+  <div id="status"></div>
+  <div class="hint">
+    Ko je vklopljeno, se QR ukazi v računu pretvorijo v sliko, ki jo zna
+    natisniti tudi tiskalnik brez podpore za QR kode. Po spremembi ni treba
+    osveževati strani.
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
